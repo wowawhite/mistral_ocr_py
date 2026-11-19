@@ -3,7 +3,7 @@ from pathlib import Path
 
 # --- Modell / Ollama -------------------------------------------------------
 OLLAMA_HOST = "http://127.0.0.1:11434"
-MODEL = "qwen3-vl:8b"
+MODEL = "qwen3-vl:8b-instruct-q8_0"
 NUM_CTX = 8192
 
 # Sampling für die beiden Durchläufe (Konsistenzprüfung)

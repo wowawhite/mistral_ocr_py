@@ -13,8 +13,8 @@ und Export als Excel-Datei. Es verlässt **keine Daten** den Rechner.
 ## Installation
 
 ```powershell
-# 1. Modell laden (ca. 6.1 GB, einmalig)
-ollama pull qwen3-vl:8b
+# 1. Modell laden (ca. 8.7 GB, einmalig)
+ollama pull qwen3-vl:8b-instruct-q8_0
 
 # 2. Python-Abhängigkeiten
 pip install -r requirements.txt
@@ -32,6 +32,11 @@ run_app.bat
 ```
 
 oder manuell: `python -m streamlit run app.py`
+
+Das Modell wird als **Q8_0-Quantierung** von Qwen3-VL-8B Instruct
+geladen (Tag `qwen3-vl:8b-instruct-q8_0`, ca. 8.7 GB) – höhere
+Genauigkeit als Q4_K_M bei weiterhin vollem GPU-Lauf auf einer
+24-GB-GPU (RTX 3090).
 
 Ablauf in der GUI:
 1. Ordner mit Fotos angeben und scannen
