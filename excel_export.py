@@ -1,11 +1,9 @@
-"""Excel-Export mit Konfidenz-Ampelformatierung."""
+"""Safe Excel export with status, quality score and statistics."""
 from datetime import datetime
 from pathlib import Path
-
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-
 from config import EXCEL_HEADERS
 
 RED_FILL = PatternFill(start_color="FFC7CE", fill_type="solid")
@@ -14,76 +12,68 @@ GREEN_FILL = PatternFill(start_color="C6EFCE", fill_type="solid")
 HEADER_FILL = PatternFill(start_color="4472C4", fill_type="solid")
 
 
-def _fill_for(conf: int) -> PatternFill | None:
-    if conf < 70:
+def safe_excel_value(value):
+    """Force untrusted OCR strings to text, never formulas."""
+    if not isinstance(value, str):
+        return value
+    if value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
+def _score_fill(score: int):
+    if score < 70:
         return RED_FILL
-    if conf < 90:
+    if score < 90:
         return YELLOW_FILL
     return GREEN_FILL
 
 
 def export(rows: list[dict], out_path: str | Path) -> Path:
-    """Schreibt die Ergebnis-Zeilen in eine .xlsx-Datei.
-
-    Jede Zeile: name, datum, arbeitstage, urlaubstage, krankheitstage,
-    confidence, geprueft, quelle (Dateiname).
-    """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Zeiterfassung"
-
-    ws.append(EXCEL_HEADERS + ["Quelldatei"])
-    for cell in ws[1]:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Zeiterfassung"
+    sheet.append(EXCEL_HEADERS)
+    for cell in sheet[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = HEADER_FILL
         cell.alignment = Alignment(horizontal="center")
+    for row in rows:
+        values = [
+            safe_excel_value(row.get("name", "")),
+            safe_excel_value(row.get("datum", "")),
+            row.get("arbeitstage", 0), row.get("urlaubstage", 0),
+            row.get("krankheitstage", 0), row.get("confidence", 0),
+            row.get("geprueft", ""), row.get("status", "processed"),
+            safe_excel_value(row.get("quelle", "")),
+            safe_excel_value(row.get("fehler", "")),
+        ]
+        sheet.append(values)
+        sheet.cell(sheet.max_row, 6).fill = _score_fill(int(row.get("confidence", 0)))
+    widths = [24, 14, 13, 13, 15, 18, 18, 15, 30, 55]
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
 
-    for r in rows:
-        ws.append([
-            r.get("name", ""),
-            r.get("datum", ""),
-            r.get("arbeitstage", 0),
-            r.get("urlaubstage", 0),
-            r.get("krankheitstage", 0),
-            r.get("confidence", 0),
-            r.get("geprueft", ""),
-            r.get("quelle", ""),
-        ])
-        conf_cell = ws.cell(row=ws.max_row, column=6)
-        fill = _fill_for(int(r.get("confidence", 0)))
-        if fill:
-            conf_cell.fill = fill
-
-    for i, width in enumerate([24, 12, 13, 13, 15, 14, 16, 30], start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-    ws.freeze_panes = "A2"
-
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists():
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out = out.with_name(f"{out.stem}_{stamp}{out.suffix}")
-    wb.save(out)
-    return out
-
-
-def export_secondary_sheet(rows: list[dict], out_path: str | Path) -> Path:
-    """Fügt zur bestehenden Datei ein Statistikblatt hinzu."""
-    wb = load_workbook(out_path)
-    if "Statistik" in wb.sheetnames:
-        del wb["Statistik"]
-    ws = wb.create_sheet("Statistik")
-    ws.append(["Metrik", "Wert"])
-    ws.append(["Anzahl Seiten", len(rows)])
-    if rows:
-        confs = [int(r.get("confidence", 0)) for r in rows]
-        ws.append(["Durchschnitt Konfidenz", round(sum(confs) / len(confs), 1)])
-        ws.append(["Seiten unter 70 %", sum(1 for c in confs if c < 70)])
-        ws.append(["Seiten ab 90 %", sum(1 for c in confs if c >= 90)])
-    for cell in ws[1]:
+    stats = workbook.create_sheet("Statistik")
+    stats.append(["Metrik", "Wert"])
+    for cell in stats[1]:
         cell.font = Font(bold=True)
-    ws.column_dimensions["A"].width = 22
-    ws.column_dimensions["B"].width = 14
-    ws.freeze_panes = "A2"
-    wb.save(out_path)
-    return Path(out_path)
+    scores = [int(row.get("confidence", 0)) for row in rows]
+    stats.append(["Anzahl Eingabedokumente", len(rows)])
+    stats.append(["Erfolgreich verarbeitet", sum(r.get("status") == "processed" for r in rows)])
+    stats.append(["Fehlgeschlagen", sum(r.get("status") != "processed" for r in rows)])
+    stats.append(["Menschlich geprüft", sum(bool(r.get("geprueft")) for r in rows)])
+    stats.append(["Durchschnittlicher Qualitätswert", round(sum(scores) / len(scores), 1) if scores else 0])
+    stats.column_dimensions["A"].width = 36
+    stats.column_dimensions["B"].width = 18
+    stats.freeze_panes = "A2"
+
+    output = Path(out_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists():
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        output = output.with_name(f"{output.stem}_{stamp}{output.suffix}")
+    workbook.save(output)
+    return output

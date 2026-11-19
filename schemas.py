@@ -1,35 +1,38 @@
-"""Pydantic-Datenmodelle: Ergebnis eines Seiten-Durchlaufs."""
-from pydantic import BaseModel, Field
+"""Validated data models for OCR results and batch evaluations."""
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FieldResult(BaseModel):
-    """Ein erkanntes Textfeld mit Modell-Selbsteinschätzung."""
-    value: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+    value: str = ""
     confidence: int = Field(default=0, ge=0, le=100)
 
 
 class PageResult(BaseModel):
-    """Strukturiertes Erkennungsergebnis einer Seite (1 Durchlauf)."""
-    name: FieldResult
-    datum: FieldResult
-    arbeitstage: int = 0
-    urlaubstage: int = 0
-    krankheitstage: int = 0
+    name: FieldResult = Field(default_factory=FieldResult)
+    datum: FieldResult = Field(default_factory=FieldResult)
+    arbeitstage: int = Field(default=0, ge=0, le=31)
+    urlaubstage: int = Field(default=0, ge=0, le=31)
+    krankheitstage: int = Field(default=0, ge=0, le=31)
     arbeitstage_conf: int = Field(default=0, ge=0, le=100)
     urlaubstage_conf: int = Field(default=0, ge=0, le=100)
     krankheitstage_conf: int = Field(default=0, ge=0, le=100)
 
 
 class PageEvaluation(BaseModel):
-    """Gesamtergebnis einer Seite inkl. Seiten-Konfidenz 0-100."""
     source_file: str
-    result: PageResult
-    page_confidence: int = Field(ge=0, le=100)
-    quality_breakdown: dict = {}
-    issues: list[str] = []
+    result: PageResult = Field(default_factory=PageResult)
+    page_confidence: int = Field(default=0, ge=0, le=100)
+    quality_breakdown: dict[str, float] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+    status: str = "processed"
+    error: str | None = None
+    human_reviewed: bool = False
 
     @property
     def verdict(self) -> str:
+        if self.status != "processed":
+            return "ROT"
         if self.page_confidence >= 90:
             return "GRUEN"
         if self.page_confidence >= 70:

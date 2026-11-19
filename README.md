@@ -1,98 +1,86 @@
-# Zeiterfassung OCR – handgeschriebene Zeitzettel zu Excel
+# Zeiterfassung OCR – lokale Handschriftenerkennung
 
-Lokale (Offline-)Erkennung von Name, Datum, Arbeit-, Urlaubs- und
-Krankheitstagen aus Fotos handgeschriebener Zeitzettel mit **Qwen3-VL-8B**
-und Export als Excel-Datei. Es verlässt **keine Daten** den Rechner.
+Lokale Verarbeitung von Fotos handschriftlicher Zeitzettel mit Qwen3-VL-8B über Ollama. Die Anwendung exportiert erkannte Felder und Verarbeitungsstatus nach Excel.
 
 ## Voraussetzungen
 
-- Windows 10/11, NVIDIA RTX 3090 (Treiber aktuell)
-- Python 3.11 oder 3.12 (64-bit)
-- [Ollama für Windows](https://ollama.com/download) **≥ 0.12.7**
-
-## Installation
+- Windows 10/11 oder Linux/macOS
+- Python 3.11 oder 3.12
+- Ollama (lokal erreichbar)
+- Modell `qwen3-vl:8b-instruct-q8_0`
 
 ```powershell
-# 1. Modell laden (ca. 8.7 GB, einmalig)
 ollama pull qwen3-vl:8b-instruct-q8_0
-
-# 2. Python-Abhängigkeiten
+python -m venv .venv
+.venv\\Scripts\\activate
 pip install -r requirements.txt
-
-# Optional, für strikten Offline-Betrieb:
-# Windows-Firewall -> ausgehende Regel für ollama.exe blockieren
 ```
 
-## Nutzung
+## Start
 
-### GUI (empfohlen)
+GUI:
 
 ```powershell
-run_app.bat
+python -m streamlit run app.py
 ```
 
-oder manuell: `python -m streamlit run app.py`
-
-Das Modell wird als **Q8_0-Quantierung** von Qwen3-VL-8B Instruct
-geladen (Tag `qwen3-vl:8b-instruct-q8_0`, ca. 8.7 GB) – höhere
-Genauigkeit als Q4_K_M bei weiterhin vollem GPU-Lauf auf einer
-24-GB-GPU (RTX 3090).
-
-Ablauf in der GUI:
-1. Ordner mit Fotos angeben und scannen
-2. "Alle Fotos verarbeiten" – jede Seite erhält eine **Konfidenz 0-100 %**
-   mit Ampelanzeige (grün ≥ 90 % / gelb ab 70 % / rot < 70 %)
-3. Werte gegebenenfalls korrigieren ("Geprüft" markieren)
-4. "Excel speichern" – schreibt lokal nach Dokumente\Zeiterfassung
-
-### Kommandozeile (Batch)
+CLI:
 
 ```powershell
-python cli.py <Ordner> -o Ergebnis.xlsx -v
+python cli.py C:\\Pfad\\Zu\\Zeitkarten -o Ergebnis.xlsx -v
 ```
 
-Beide Wege erzeugen eine `.xlsx` mit den Spalten Name, Datum,
-Arbeitstage, Urlaubstage, Krankheitstage, **Konfidenz (%)**,
-Geprüft, Quelldatei sowie einem Statistikblatt.
+## Konfiguration
 
-## Konfidenz je Seite (0-100 %)
+Optionale Umgebungsvariablen:
 
-Zusammengesetzt aus vier Signalen:
+| Variable | Default | Zweck |
+|---|---|---|
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Lokaler Ollama-Endpunkt |
+| `OCR_MODEL` | `qwen3-vl:8b-instruct-q8_0` | Modell-Tag |
+| `OCR_NUM_CTX` | `8192` | Kontextfenster |
+| `OLLAMA_TIMEOUT` | `180` | Timeout in Sekunden |
+| `OCR_RETRIES` | `1` | Zusätzliche Versuche pro OCR-Aufruf |
 
-| Signal | Gewicht |
-|---|---|
-| Modell-Selbsteinschätzung je Feld | 35 % |
-| Konsistenz eines Zweitdurchlaufs (variiertes Sampling) | 30 % |
-| Plausibilitätsregeln (Datums-/Tage-Summen, Format) | 20 % |
-| Bildqualität (Schärfe, Kontrast, Helligkeit via OpenCV) | 15 % |
+## Qualitätswert und menschliche Prüfung
 
-Ampel-Regel für den Umgang:
-- **≥ 90 %** – Übernahme zulassen
-- **70-89 %** – anzeigen und vom Nutzer bestätigen lassen
-- **< 70 %** – manuelle Korrektur verpflichtend
+Der Qualitätswert 0–100 ist eine **heuristische Kennzahl**, keine kalibrierte Wahrscheinlichkeit. Er kombiniert Modellselbsteinschätzung, Konsistenz zweier OCR-Durchläufe, Plausibilität und Bildqualität. Er muss mit einem manuell annotierten Datensatz validiert werden, bevor er für automatische Entscheidungen eingesetzt wird.
+
+Ein hoher Qualitätswert bedeutet nicht, dass ein Mensch das Dokument geprüft hat. Das Feld `Geprüft` wird daher ausschließlich durch explizite Benutzerbestätigung gesetzt.
+
+## Fehler- und Exportverhalten
+
+- Jedes Eingabebild erhält einen Ergebnisdatensatz – auch bei OCR-/Bildfehlern.
+- Fehlerhafte Dokumente werden mit Status `failed`, Qualitätswert 0 und Fehlertext exportiert.
+- Quelldateien werden standardmäßig nicht verschoben oder gelöscht.
+- OCR-Strings, die wie Excel-Formeln beginnen, werden als Text escaped.
+- Das Workbook enthält ein Blatt `Zeiterfassung` und ein Blatt `Statistik`.
+- GUI und CLI verwenden dieselbe Batch-Service-Funktion.
+
+## Tests
+
+```powershell
+pytest -q
+```
+
+Die Tests benötigen keine laufende Ollama-Instanz.
 
 ## Projektstruktur
 
-```
-zeiterfassung/
-├── app.py              # Streamlit-GUI
-├── cli.py              # Kommandozeilen-Batchverarbeitung
-├── pipeline.py         # Orchestrierung je Seite (inkl. Rot-Archiv)
-├── ocr_engine.py       # Qwen3-VL-8B via Ollama (2 Durchläufe)
-├── confidence.py       # Seiten-Konfidenz 0-100 %
-├── validation.py       # Plausibilitätsprüfung
-├── preprocessing.py    # Bildvorverarbeitung + Bildqualität (OpenCV)
-├── excel_export.py     # Excel-Export mit Ampelformatierung
-├── schemas.py          # Pydantic-Datenmodelle
-├── config.py           # Modell, Schwellen, Gewichte, Pfade
-├── requirements.txt
-├── __main__.py         # python -m zeiterfassung
-└── run_app.bat         # GUI-Start unter Windows
+```text
+app.py                 Streamlit GUI
+cli.py                 CLI
+pipeline.py            Gemeinsame Batch-Verarbeitung
+ocr_engine.py          Ollama / Qwen OCR
+preprocessing.py       OpenCV Bildvorverarbeitung
+confidence.py          Heuristischer Qualitätswert
+validation.py           Feld- und Plausibilitätsprüfung
+schemas.py              Pydantic Datenmodelle
+excel_export.py         Excel-Export und Statistik
+config.py               Umgebungsbasierte Konfiguration
+tests/                  Automatisierte Tests
 ```
 
-## Datenschutz
+## Datenschutz und Betrieb
 
-- Ollama lauscht standardmäßig nur auf `127.0.0.1` – nicht ändern
-- Modell-Dateien liegen vollständig lokal
-- Ausgabe-Excel nur auf der lokalen Platte
-- Empfehlung: Windows-Firewall-Ausgangssperre für `ollama.exe`
+Die Anwendung ist für lokale Ollama-Verarbeitung ausgelegt. `OLLAMA_HOST` sollte auf Loopback (`127.0.0.1`) zeigen, wenn kein Zugriff aus dem Netzwerk beabsichtigt ist. Beachten Sie, dass lokale Verarbeitung allein keine vollständige Datenschutz- oder Sicherheitsprüfung ersetzt.
